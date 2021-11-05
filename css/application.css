@@ -1,0 +1,133 @@
+html, body {
+  padding: 0;
+  margin: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  overflow: hidden;
+}
+
+.calcite-theme-app {
+  --calcite-ui-brand: #007ac2;
+  --calcite-ui-brand-hover: #00619B;
+  --calcite-ui-brand-press: #004874;
+  --calcite-ui-text-2: inherit;
+  --calcite-ui-foreground-1: inherit;
+  --calcite-ui-border-1: inherit;
+}
+
+.content-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.content-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.content-center {
+  display: flex;
+  flex-direction: row;
+  justify-self: center;
+  align-self: center;
+}
+
+
+.content-static {
+  flex-grow: 0;
+  flex-shrink: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.content-fill {
+  flex-grow: 1;
+  flex-shrink: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.panel-content {
+  margin: 5px 5px 0 5px;
+  padding: 10px 10px 0 10px;
+  color: var(--calcite-ui-text-2);
+  background-color: var(--calcite-ui-foreground-1);
+  border: solid 1px var(--calcite-ui-border-1);
+}
+
+.panel-content:last-of-type {
+  margin-bottom: 5px;
+}
+
+.panel-no-border {
+  border: none;
+}
+
+.panel-no-margin {
+  margin: 0;
+}
+
+.panel-no-padding {
+  padding: 0;
+}
+
+
+.toggle-panel[hidden] {
+  display: none;
+}
+
+header[slot="header"] {
+  z-index: 99;
+  padding: 0 1rem 0 1rem;
+}
+
+
+calcite-loader#app-loader {
+  z-index: 1000;
+  top: calc(50vh - 112px) !important;
+}
+
+.esri-ui-corner calcite-loader {
+  padding: 0 !important;
+}
+
+.application-title {
+  color: var(--calcite-ui-brand);
+}
+
+
+calcite-panel > div[slot="header-actions-end"] {
+  display: inline-flex;
+}
+
+calcite-notice {
+  z-index: 101;
+  /*align-self: center;*/
+}
+
+
+#view-container {
+  flex-grow: 1;
+  flex-shrink: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#view-updating {
+  pointer-events: none;
+  position: absolute;
+  padding: 0;
+  bottom: 90px;
+  right: 30px;
+}
+
+#bottom-container {
+  height: 220px;
+}

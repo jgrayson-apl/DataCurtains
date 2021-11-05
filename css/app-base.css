@@ -1,0 +1,65 @@
+:root {
+  --spacing-s: 0.2rem;
+  --spacing-m: 0.5rem;
+  --spacing-l: 0.8rem;
+}
+
+.font-size-s {
+  font-size: 9pt;
+}
+
+.font-size-m {
+  font-size: 11pt;
+}
+
+.font-size-l {
+  font-size: 13pt;
+}
+
+.padding-s {
+  padding: var(--spacing-s);
+}
+
+.padding-m {
+  padding: var(--spacing-m);
+}
+
+.padding-l {
+  padding: var(--spacing-l);
+}
+
+.margin-s {
+  margin: var(--spacing-s);
+}
+
+.margin-m {
+  margin: var(--spacing-m);
+}
+
+.margin-l {
+  margin: var(--spacing-l);
+}
+
+.leader-s {
+  margin-top: var(--spacing-s);
+}
+
+.leader-m {
+  margin-top: var(--spacing-m);
+}
+
+.leader-l {
+  margin-top: var(--spacing-l);
+}
+
+.trailer-s {
+  margin-bottom: var(--spacing-s);
+}
+
+.trailer-m {
+  margin-bottom: var(--spacing-m);
+}
+
+.trailer-l {
+  margin-bottom: var(--spacing-l);
+}

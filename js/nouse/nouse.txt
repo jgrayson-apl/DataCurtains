@@ -1,0 +1,64 @@
+/*const transformation = projection.getTransformation(californiaAlbersNAD33, outputSR, csvLayer.fullExtent);
+
+const dataQuery = csvLayer.createQuery();
+dataQuery.set({
+  where: '1=1',
+  outFields: ['*'],
+  returnGeometry: true
+  //outSpatialReference: outputSR
+});
+csvLayer.queryFeatures(dataQuery).then((dataFS) => {
+  //resolve(dataFS.features);
+
+  const inputGeometries = dataFS.features.map(feature => feature.geometry).slice(0, 1000);
+  const outputGeometries = projection.project(inputGeometries, outputSR, transformation);
+
+  const outputFeatures = dataFS.features.map((feature, featureIdx) => {
+    return {
+      attributes: feature.attributes,
+      geometry: outputGeometries[featureIdx]
+      //geometry: projection.project(feature.geometry, outputSR, transformation)
+    }
+  });
+  resolve({csvLayer, outputFeatures});
+
+});*/
+
+
+/*dataLoadedResponses.forEach(({csvLayer, outputFeatures}) => {
+
+const dataLayer = new FeatureLayer({
+  title: csvLayer.title,
+  fields: [...csvLayer.fields],
+  objectIdField: csvLayer.objectIdField,
+  geometryType: csvLayer.geometryType,
+  spatialReference: outputSR,
+  elevationInfo: {
+    mode: 'absolute-height',
+    featureExpressionInfo: {expression: '$feature.GROUND_ELEVATION_m'}
+  },
+  source: [],
+  renderer: {
+    type: 'simple',
+    symbol: {
+      type: "point-3d",
+      symbolLayers: [{
+        type: "object",
+        width: 100,
+        height: 100,
+        depth: 100,
+        resource: {primitive: "sphere"},
+        material: {color: "red"}
+      }]
+    }
+  }
+});
+dataLayer.load().then(() => {
+
+  dataLayer.applyEdits({addFeatures: outputFeatures}).then(() => {
+    view.map.add(dataLayer);
+  });
+
+}).catch(this.displayError);
+
+});*/
