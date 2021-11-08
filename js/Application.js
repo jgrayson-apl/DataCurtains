@@ -174,8 +174,8 @@ class Application extends AppBase {
         this._progress('Process started...');
 
         const dataFilesInfos = [
-          {title: 'Paso Robles', url: './data/PasoRobles.csv', visible: false, maxDataValue: 1566, zoomTo: false},
-          {title: 'Indian Wells Valley', url: './data/IndianWellsValley.csv', visible: false, maxDataValue: 20000, zoomTo: true}
+          {title: 'Paso Robles', url: './data/PasoRobles_4326.csv', visible: false, maxDataValue: 1566, zoomTo: false},
+          {title: 'Indian Wells Valley', url: './data/IndianWellsValley_4326.csv', visible: false, maxDataValue: 20000, zoomTo: true}
         ];
 
         // RHO
@@ -192,139 +192,147 @@ class Application extends AppBase {
           depth: 20
         };
 
-        dataFilesInfos.forEach(dataFileInfo => {
+        const layerHandles = dataFilesInfos.map(dataFileInfo => {
+          return new Promise((layerResolve, layerReject) => {
 
-          const csvLayer = new CSVLayer({
-            ...dataFileInfo,
-            elevationInfo: {
-              mode: 'relative-to-ground',
-              featureExpressionInfo: {
-                expression: '($feature.GROUND_ELEVATION_m - $feature.INTERVAL_BOTTOM_ELEVATION_m)'
-              }
-            },
-            /*labelingInfo: [
-             {
-             labelExpressionInfo: {
-             expression: `Floor($feature.GROUND_ELEVATION_m - $feature.INTERVAL_BOTTOM_ELEVATION_m)`
-             },
-             symbol: {
-             type: "text",
-             color: "#ffffff",
-             haloColor: "#242424",
-             haloSize: 1.5,
-             font: {
-             size: 11,
-             weight: "bold"
-             }
-             }
-             }
-             ],*/
-            renderer: {
-              type: 'simple',
-              symbol: {
-                type: "point-3d",
-                symbolLayers: [
+            const csvLayer = new CSVLayer({
+              ...dataFileInfo,
+              elevationInfo: {
+                mode: 'relative-to-ground',
+                featureExpressionInfo: {
+                  expression: '($feature.GROUND_ELEVATION_m - $feature.INTERVAL_BOTTOM_ELEVATION_m)'
+                }
+              },
+              /*labelingInfo: [
+               {
+               labelExpressionInfo: {
+               expression: `Floor($feature.GROUND_ELEVATION_m - $feature.INTERVAL_BOTTOM_ELEVATION_m)`
+               },
+               symbol: {
+               type: "text",
+               color: "#ffffff",
+               haloColor: "#242424",
+               haloSize: 1.5,
+               font: {
+               size: 11,
+               weight: "bold"
+               }
+               }
+               }
+               ],*/
+              renderer: {
+                type: 'simple',
+                symbol: {
+                  type: "point-3d",
+                  symbolLayers: [
+                    {
+                      type: "object",
+                      ...cubeSizeMeters,
+                      resource: {primitive: "cylinder"},
+                      material: {color: "#ffffff"}
+                    }
+                  ]
+                },
+                visualVariables: [
                   {
-                    type: "object",
-                    ...cubeSizeMeters,
-                    resource: {primitive: "cylinder"},
-                    material: {color: "#ffffff"}
+                    type: 'color',
+                    valueExpression: `$feature.RHO / ${ dataFileInfo.maxDataValue }`,
+                    stops: [
+                      {value: 0.001, color: "#0000ff"},
+                      {value: 0.010, color: "#00ffff"},
+                      {value: 0.100, color: "#ffff00"},
+                      {value: 1.000, color: "#850007"}
+                    ]
                   }
                 ]
-              },
-              visualVariables: [
-                {
-                  type: 'color',
-                  valueExpression: `$feature.RHO / ${ dataFileInfo.maxDataValue }`,
-                  stops: [
-                    {value: 0.001, color: "#0000ff"},
-                    {value: 0.010, color: "#00ffff"},
-                    {value: 0.100, color: "#ffff00"},
-                    {value: 1.000, color: "#850007"}
-                  ]
-                }
-              ]
-            }
-          });
-          csvLayer.load().then(() => {
-            view.map.add(csvLayer);
-
-            if (dataFileInfo.zoomTo) {
-              view.goTo(csvLayer.fullExtent);
-            }
-
-            this._progress(`CSV Layer loaded and added to map [ ${ csvLayer.title } ]`);
-
-            const lineIDsQuery = csvLayer.createQuery();
-            lineIDsQuery.set({
-              where: '1=1',
-              outFields: ['LINE_NO'],
-              returnDistinctValues: true,
-              returnGeometry: false
+              }
             });
-            csvLayer.queryFeatures(lineIDsQuery).then((lineIDsFS) => {
+            csvLayer.load().then(() => {
 
-              this._progress('list of LINE_NO retrieved...');
-              const lineIDs = lineIDsFS.features.map(feature => { return feature.attributes.LINE_NO; });
+              view.map.add(csvLayer);
+              this._progress(`CSV Layer loaded and added to map [ ${ csvLayer.title } ]`);
 
-              const processedLineHandles = lineIDs.map(lineID => {
-                return new Promise((resolve, reject) => {
+              if (dataFileInfo.zoomTo) {
+                view.goTo(csvLayer.fullExtent);
+              }
 
-                  const lineQuery = csvLayer.createQuery();
-                  lineQuery.set({
-                    where: `LINE_NO = ${ lineID }`,
-                    outFields: ['*'],
-                    returnGeometry: true
-                  });
-                  csvLayer.queryFeatures(lineQuery).then((lineFS) => {
-                    this._progress(`Creating data curtain for (LINE_NO = ${ lineID })...`);
-
-                    this.createCurtainMesh({
-                      view,
-                      lineID,
-                      renderer: csvLayer.renderer,
-                      maxDataValue: dataFileInfo.maxDataValue,
-                      features: lineFS.features
-                    }).then(resolve).catch(reject);
-
-                  }).catch(reject);
-                });
+              // GETTING LIST OF UNIQUE LINE_NO VALUES //
+              const lineIDsQuery = csvLayer.createQuery();
+              lineIDsQuery.set({
+                where: '1=1',
+                outFields: ['LINE_NO'],
+                returnDistinctValues: true,
+                returnGeometry: false
               });
-              Promise.all(processedLineHandles).then((wallGraphics) => {
-                this._progress('Process finished.');
+              csvLayer.queryFeatures(lineIDsQuery).then((lineIDsFS) => {
 
-                const dataCurtainFeatureLayer = new FeatureLayer({
-                  title: `${ csvLayer.title } - Data Curtains`,
-                  fields: [
-                    {name: 'ObjectID', alias: "ObjectID", type: 'oid'},
-                    {name: 'LINE_NO', alias: "LINE NO", type: 'integer'},
-                  ],
-                  objectIdField: 'ObjectID',
-                  geometryType: 'mesh',
-                  spatialReference: csvLayer.spatialReference,
-                  source: wallGraphics,
-                  renderer: {
-                    type: 'simple',
-                    symbol: {
-                      type: "mesh-3d",
-                      symbolLayers: [
-                        {
-                          type: "fill",
-                          material: {color: "rgba(255,255,255,0.9)"},
-                          edges: {type: "solid", color: 'yellow', size: 2.5}
-                        }
-                      ]
-                    }
-                  }
+                this._progress('list of LINE_NO retrieved...');
+                const lineIDs = lineIDsFS.features.map(feature => { return feature.attributes.LINE_NO; });
+
+                // FOR EACH LINE_NO VALUE //
+                const processedLineHandles = lineIDs.map(lineID => {
+                  return new Promise((resolve, reject) => {
+
+                    // GET ALL POINTS ALONG LINE //
+                    const lineQuery = csvLayer.createQuery();
+                    lineQuery.set({
+                      where: `LINE_NO = ${ lineID }`,
+                      outFields: ['*'],
+                      returnGeometry: true
+                    });
+                    csvLayer.queryFeatures(lineQuery).then((lineFS) => {
+                      this._progress(`Creating data curtain for (LINE_NO = ${ lineID })...`);
+
+                      this.createCurtainMesh({
+                        view,
+                        lineID,
+                        features: lineFS.features,
+                        renderer: csvLayer.renderer,
+                        maxDataValue: dataFileInfo.maxDataValue
+                      }).then(resolve).catch(reject);
+
+                    }).catch(reject);
+                  });
                 });
-                view.map.add(dataCurtainFeatureLayer);
+                Promise.all(processedLineHandles).then((wallGraphics) => {
+                  this._progress('Process finished.');
 
-                resolve();
+                  const dataCurtainFeatureLayer = new FeatureLayer({
+                    title: `${ csvLayer.title } - Data Curtains`,
+                    fields: [
+                      {name: 'ObjectID', alias: "ObjectID", type: 'oid'},
+                      {name: 'LINE_NO', alias: "LINE NO", type: 'integer'},
+                    ],
+                    objectIdField: 'ObjectID',
+                    geometryType: 'mesh',
+                    spatialReference: csvLayer.spatialReference,
+                    source: wallGraphics,
+                    renderer: {
+                      type: 'simple',
+                      symbol: {
+                        type: "mesh-3d",
+                        symbolLayers: [
+                          {
+                            type: "fill",
+                            material: {color: "rgba(255,255,255,0.9)"},
+                            edges: {type: "solid", color: 'yellow', size: 2.5}
+                          }
+                        ]
+                      }
+                    }
+                  });
+                  view.map.add(dataCurtainFeatureLayer);
 
+                  layerResolve();
+
+                }).catch(this.displayError);
               }).catch(this.displayError);
             }).catch(this.displayError);
-          }).catch(this.displayError);
+
+          });
         });
+
+        Promise.all(layerHandles).then(resolve).catch(reject);
 
       });
     });
