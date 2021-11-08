@@ -192,9 +192,9 @@ class Application extends AppBase {
           depth: 20
         };
 
-        const layerHandles = dataFilesInfos.map(dataFileInfo => {
-          return new Promise((layerResolve, layerReject) => {
-
+        // LOAD CSV LAYERS //
+        const csvLayerHandles = dataFilesInfos.map(dataFileInfo => {
+          return new Promise((resolve, reject) => {
             const csvLayer = new CSVLayer({
               ...dataFileInfo,
               elevationInfo: {
@@ -248,94 +248,112 @@ class Application extends AppBase {
               }
             });
             csvLayer.load().then(() => {
-
-              view.map.add(csvLayer);
               this._progress(`CSV Layer loaded and added to map [ ${ csvLayer.title } ]`);
+              view.map.add(csvLayer);
+              resolve({csvLayer, maxDataValue: dataFileInfo.maxDataValue});
+            });
+          });
+        });
 
-              if (dataFileInfo.zoomTo) {
-                view.goTo(csvLayer.fullExtent);
-              }
+        // CSV LAYERS TO MESH LAYERS //
+        Promise.all(csvLayerHandles).then((csvLayerInfos) => {
 
-              // GETTING LIST OF UNIQUE LINE_NO VALUES //
-              const lineIDsQuery = csvLayer.createQuery();
-              lineIDsQuery.set({
-                where: '1=1',
-                outFields: ['LINE_NO'],
-                returnDistinctValues: true,
-                returnGeometry: false
-              });
-              csvLayer.queryFeatures(lineIDsQuery).then((lineIDsFS) => {
+          // ZOOM EXTENT OF ALL LAYERS //
+          const zoomExtent = csvLayerInfos.reduce((extent, {csvLayer}) => {
+            return (extent == null) ? csvLayer.fullExtent : extent.union(csvLayer.fullExtent);
+          }, null);
+          // GO TO EXTENT OF ALL LAYERS //
+          view.goTo(zoomExtent).then(() => {
 
-                this._progress('list of LINE_NO retrieved...');
-                const lineIDs = lineIDsFS.features.map(feature => { return feature.attributes.LINE_NO; });
+            // CONVERT CSV LAYERS TO MESH //
+            const meshLayerHandles = csvLayerInfos.map(csvLayerToMeshLayer);
 
-                // FOR EACH LINE_NO VALUE //
-                const processedLineHandles = lineIDs.map(lineID => {
-                  return new Promise((resolve, reject) => {
+            Promise.all(meshLayerHandles).then(resolve).catch(reject);
+          });
+        });
 
-                    // GET ALL POINTS ALONG LINE //
-                    const lineQuery = csvLayer.createQuery();
-                    lineQuery.set({
-                      where: `LINE_NO = ${ lineID }`,
-                      outFields: ['*'],
-                      returnGeometry: true
-                    });
-                    csvLayer.queryFeatures(lineQuery).then((lineFS) => {
-                      this._progress(`Creating data curtain for (LINE_NO = ${ lineID })...`);
 
-                      this.createCurtainMesh({
-                        view,
-                        lineID,
-                        features: lineFS.features,
-                        renderer: csvLayer.renderer,
-                        maxDataValue: dataFileInfo.maxDataValue
-                      }).then(resolve).catch(reject);
+        // CSV LAYER TO MESH LAYER //
+        const csvLayerToMeshLayer = ({csvLayer, maxDataValue}) => {
+          return new Promise((layerResolve, layerReject) => {
 
-                    }).catch(reject);
+            // GETTING LIST OF UNIQUE LINE_NO VALUES //
+            const lineIDsQuery = csvLayer.createQuery();
+            lineIDsQuery.set({
+              where: '1=1',
+              outFields: ['LINE_NO'],
+              returnDistinctValues: true,
+              returnGeometry: false
+            });
+            csvLayer.queryFeatures(lineIDsQuery).then((lineIDsFS) => {
+
+              this._progress('list of LINE_NO retrieved...');
+              const lineIDs = lineIDsFS.features.map(feature => { return feature.attributes.LINE_NO; });
+
+              // FOR EACH LINE_NO VALUE //
+              const processedLineHandles = lineIDs.map(lineID => {
+                return new Promise((resolve, reject) => {
+
+                  // GET ALL POINTS ALONG LINE //
+                  const lineQuery = csvLayer.createQuery();
+                  lineQuery.set({
+                    where: `LINE_NO = ${ lineID }`,
+                    outFields: ['*'],
+                    returnGeometry: true
                   });
+                  csvLayer.queryFeatures(lineQuery).then((lineFS) => {
+                    this._progress(`Creating data curtain for (LINE_NO = ${ lineID })...`);
+
+                    this.createCurtainMesh({
+                      view,
+                      lineID,
+                      features: lineFS.features,
+                      renderer: csvLayer.renderer,
+                      maxDataValue: maxDataValue
+                    }).then(resolve).catch(reject);
+
+                  }).catch(reject);
                 });
-                Promise.all(processedLineHandles).then((wallGraphics) => {
-                  this._progress('Process finished.');
+              });
+              Promise.all(processedLineHandles).then((wallGraphics) => {
+                this._progress('Process finished.');
 
-                  const dataCurtainFeatureLayer = new FeatureLayer({
-                    title: `${ csvLayer.title } - Data Curtains`,
-                    fields: [
-                      {name: 'ObjectID', alias: "ObjectID", type: 'oid'},
-                      {name: 'LINE_NO', alias: "LINE NO", type: 'integer'},
-                    ],
-                    objectIdField: 'ObjectID',
-                    geometryType: 'mesh',
-                    // elevationInfo: {
-                    //   mode: 'relative-to-ground'
-                    // },
-                    spatialReference: csvLayer.spatialReference,
-                    source: wallGraphics,
-                    renderer: {
-                      type: 'simple',
-                      symbol: {
-                        type: "mesh-3d",
-                        symbolLayers: [
-                          {
-                            type: "fill",
-                            material: {color: "rgba(255,255,255,0.9)"},
-                            edges: {type: "solid", color: 'yellow', size: 2.5}
-                          }
-                        ]
-                      }
+                const dataCurtainFeatureLayer = new FeatureLayer({
+                  title: `${ csvLayer.title } - Data Curtains`,
+                  fields: [
+                    {name: 'ObjectID', alias: "ObjectID", type: 'oid'},
+                    {name: 'LINE_NO', alias: "LINE NO", type: 'integer'},
+                  ],
+                  objectIdField: 'ObjectID',
+                  geometryType: 'mesh',
+                  // elevationInfo: {
+                  //   mode: 'relative-to-ground'
+                  // },
+                  spatialReference: csvLayer.spatialReference,
+                  source: wallGraphics,
+                  renderer: {
+                    type: 'simple',
+                    symbol: {
+                      type: "mesh-3d",
+                      symbolLayers: [
+                        {
+                          type: "fill",
+                          material: {color: "rgba(255,255,255,0.9)"},
+                          edges: {type: "solid", color: 'yellow', size: 2.5}
+                        }
+                      ]
                     }
-                  });
-                  view.map.add(dataCurtainFeatureLayer);
+                  }
+                });
+                view.map.add(dataCurtainFeatureLayer);
 
-                  layerResolve();
+                layerResolve();
 
-                }).catch(this.displayError);
               }).catch(this.displayError);
             }).catch(this.displayError);
 
           });
-        });
-
-        Promise.all(layerHandles).then(resolve).catch(reject);
+        };
 
       });
     });
@@ -406,21 +424,17 @@ class Application extends AppBase {
         'esri/geometry/Mesh'
       ], (meshUtils, Mesh) => {
 
-        const meshSymbol = {
-          type: "mesh-3d",
-          symbolLayers: [
-            {
-              type: "fill",
-              material: {color: "rgba(255,255,255,0.9)"},
-              edges: {type: "solid", color: 'yellow', size: 2.5}
-            }
-          ]
-        };
+        // const elevationLayer = view.map.ground.layers.getItemAt(0);
+        // this.getElevation = async (feature) => {
+        //   return await elevationLayer.queryElevation(feature.geometry, {demResolution: 'auto'}).geometry.z; // finest-contiguous
+        // };
 
         const outputSR = features[0].geometry.spatialReference;
 
         this._progress(` - getting vertex colors for (LINE_NO = ${ lineID })...`);
         this.getColors(features, renderer).then(colors => {
+
+          //this.getElevations(features).then(elevations => {
 
           this._progress(` - creating location bins for (LINE_NO = ${ lineID })...`);
           const locationBins = features.reduce((bins, feature, featureIdx) => {
@@ -498,6 +512,7 @@ class Application extends AppBase {
           resolve(wallGraphic);
         });
       });
+      //});
     });
   }
 
