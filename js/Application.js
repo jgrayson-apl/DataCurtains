@@ -305,6 +305,9 @@ class Application extends AppBase {
                     ],
                     objectIdField: 'ObjectID',
                     geometryType: 'mesh',
+                    // elevationInfo: {
+                    //   mode: 'relative-to-ground'
+                    // },
                     spatialReference: csvLayer.spatialReference,
                     source: wallGraphics,
                     renderer: {
@@ -337,7 +340,6 @@ class Application extends AppBase {
       });
     });
   }
-
 
   /**
    *
