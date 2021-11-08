@@ -148,6 +148,20 @@ class Application extends AppBase {
     });
   }
 
+  /**
+   *
+   * @param msg
+   * @private
+   */
+  _progress(msg = '...') {
+
+    if (!this.start) { this.start = Date.now(); }
+
+    const seconds = ((Date.now() - this.start) / 1000).toFixed(0);
+    console.info(`Duration: ${ seconds } seconds [ ${ msg } ]`);
+
+  }
+
 
   /**
    *
@@ -157,7 +171,7 @@ class Application extends AppBase {
     return new Promise((resolve, reject) => {
       require(['esri/layers/CSVLayer'], (CSVLayer) => {
 
-        const start = Date.now();
+        this._progress('Started');
 
         const dataFilesInfos = [
           {title: 'Paso Robles', url: './data/PasoRobles_4326.csv', visible: false, maxDataValue: 1566},
@@ -235,10 +249,13 @@ class Application extends AppBase {
           csvLayer.load().then(() => {
             view.map.add(csvLayer);
 
+            this._progress('CSV Layer loaded and added to map...');
+
             if (dataFileInfo.visible) {
               csvLayer.visible = false;
 
               view.goTo(csvLayer.fullExtent).then(() => {
+
                 const lineIDsQuery = csvLayer.createQuery();
                 lineIDsQuery.set({
                   where: '1=1',
@@ -248,6 +265,7 @@ class Application extends AppBase {
                 });
                 csvLayer.queryFeatures(lineIDsQuery).then((lineIDsFS) => {
 
+                  this._progress('list of LINE_NO retrieved...');
                   const lineIDs = lineIDsFS.features.map(feature => { return feature.attributes.LINE_NO; });
 
                   const processedLineHandles = lineIDs.map(lineID => {
@@ -260,18 +278,23 @@ class Application extends AppBase {
                         returnGeometry: true
                       });
                       csvLayer.queryFeatures(lineQuery).then((lineFS) => {
-                        this.createCurtainMesh({view, lineID, renderer: csvLayer.renderer, maxDataValue: dataFileInfo.maxDataValue, features: lineFS.features}).then(({wallGraphic}) => {
-                          resolve(wallGraphic)
-                        }).catch(reject);
+                        this._progress(`Creating data curtain for (LINE_NO = ${ lineID })...`);
+
+                        this.createCurtainMesh({
+                          view,
+                          lineID,
+                          renderer: csvLayer.renderer,
+                          maxDataValue: dataFileInfo.maxDataValue,
+                          features: lineFS.features
+                        }).then(resolve).catch(reject);
+
                       }).catch(reject);
                     });
                   });
                   Promise.all(processedLineHandles).then((wallGraphics) => {
+                    this._progress('Finished');
 
                     view.graphics.addMany(wallGraphics);
-
-                    const seconds = ((Date.now() - start) / 1000).toFixed(0);
-                    alert(`Duration: ${ seconds } seconds`);
 
                     resolve();
                   });
@@ -301,20 +324,19 @@ class Application extends AppBase {
         }
       };
 
-      workers.open(workerScriptUrl).then(connection => {
-
-        this.getColors = (features, renderer) => {
-          return new Promise((resolve, reject) => {
+      this.getColors = (features, renderer) => {
+        return new Promise((resolve, reject) => {
+          workers.open(workerScriptUrl).then(connection => {
 
             const rendererJSON = renderer.toJSON();
             const featuresJSON = features.map(f => f.toJSON());
 
             connection.invoke("getColors", {featuresJSON, rendererJSON}).then(resolve).catch(reject);
 
-          });
-        }
+          }).catch(reject);
+        });
+      }
 
-      }).catch(console.error);
     });
   }
 
@@ -347,104 +369,84 @@ class Application extends AppBase {
 
         const outputSR = features[0].geometry.spatialReference;
 
-        const featureBins = features.reduce((bins, feature) => {
+        this._progress(` - getting vertex colors for (LINE_NO = ${ lineID })...`);
+        this.getColors(features, renderer).then(colors => {
 
-          const offset = (feature.attributes.GROUND_ELEVATION_m - feature.attributes.INTERVAL_BOTTOM_ELEVATION_m);
-          const elevationOffset = Math.floor(offset);
-          const bin = bins.get(elevationOffset) || [];
+          this._progress(` - creating location bins for (LINE_NO = ${ lineID })...`);
+          const locationBins = features.reduce((bins, feature, featureIdx) => {
 
-          const feature3D = feature.clone();
-          feature3D.geometry = view.groundView.elevationSampler.queryElevation(feature3D.geometry);
-          feature3D.geometry.z += offset;
+            const locationHash = `${ feature.geometry.x },${ feature.geometry.y }`;
+            const bin = bins.get(locationHash) || {elevation: null, coords: [], colors: []};
 
-          bin.push(feature3D);
+            const elevationAtLocation = bin.elevation || view.groundView.elevationSampler.queryElevation(feature.geometry).z;
+            const elevationOffset = (feature.attributes.GROUND_ELEVATION_m - feature.attributes.INTERVAL_BOTTOM_ELEVATION_m);
 
-          return bins.set(elevationOffset, bin);
-        }, new Map());
+            bin.coords.push([feature.geometry.x, feature.geometry.y, (elevationAtLocation + elevationOffset)]);
+            bin.colors.push(colors[featureIdx]);
 
-
-        /*const getColors = features => {
-         return new Promise((resolve, reject) => {
-         const colorHandles = features.map(feature => {
-         return symbolUtils.getDisplayedColor(feature, {renderer});
-         });
-         Promise.all(colorHandles).then((colors) => {
-         resolve(colors.map(c => c.toRgb().concat(255)));
-         });
-         });
-         };*/
+            return bins.set(locationHash, bin);
+          }, new Map());
 
 
-        const elevationOffsets = Array.from(featureBins.keys());
-        elevationOffsets.sort((a, b) => (b - a));
+          this._progress(` - assembling mesh triangles for (LINE_NO = ${ lineID })...`);
+          const locationHashKeys = Array.from(locationBins.keys());
 
-        const meshWallsHandles = elevationOffsets.map((elevationOffset, offsetIdx) => {
-          //console.info(`================> ${ lineID }: ${ elevationOffset }`);
+          const meshWallSections = locationHashKeys.reduce((wallSections, locationHash, locationHashIndex) => {
 
-          if (offsetIdx < elevationOffsets.length - 1) {
-            return new Promise(async (resolve, reject) => {
+            if (locationHashIndex < (locationHashKeys.length - 1)) {
 
               // TOP AND BOTTOM COORDINATES //
-              const topFeatures = featureBins.get(elevationOffsets[offsetIdx]);
-              const coordsTop = topFeatures.map(f => f.geometry).map(geom => [geom.x, geom.y, geom.z]);
+              const featureInfosLeft = locationBins.get(locationHashKeys[locationHashIndex]);
+              const featureInfosRight = locationBins.get(locationHashKeys[locationHashIndex + 1]);
 
-              const bottomFeatures = featureBins.get(elevationOffsets[offsetIdx + 1]);
-              const coordsBottom = bottomFeatures.map(f => f.geometry).map(geom => [geom.x, geom.y, geom.z]);
+              const coordsLeft = featureInfosLeft.coords;
+              const colorsLeft = featureInfosLeft.colors;
+              const coordsRight = featureInfosRight.coords;
+              const colorsRight = featureInfosRight.colors;
 
-              const colorsTop = await this.getColors(topFeatures, renderer);
-              const colorsBottom = await this.getColors(bottomFeatures, renderer);
+              if (coordsLeft.length === coordsRight.length) {
 
-              if (coordsBottom.length === coordsTop.length) {
-
-                // INTERLEAVED SIDE WALL COORDINATES //
+                // INTERLEAVED WALL COORDINATES //
                 const vertexCoords = [];
                 const vertexColors = [];
-                for (let topIdx = 0; topIdx < (coordsTop.length - 1); topIdx++) {
-                  vertexCoords.push(coordsTop[topIdx], coordsTop[topIdx + 1], coordsBottom[topIdx + 1]);
-                  vertexColors.push(colorsTop[topIdx], colorsTop[topIdx + 1], colorsBottom[topIdx + 1]);
-
-                  vertexCoords.push(coordsTop[topIdx], coordsBottom[topIdx + 1], coordsBottom[topIdx]);
-                  vertexColors.push(colorsTop[topIdx], colorsBottom[topIdx + 1], colorsBottom[topIdx]);
+                for (let leftIdx = 0; leftIdx < (coordsLeft.length - 1); leftIdx++) {
+                  vertexCoords.push(coordsLeft[leftIdx], coordsRight[leftIdx], coordsLeft[leftIdx + 1]);
+                  vertexColors.push(colorsLeft[leftIdx], colorsRight[leftIdx], colorsLeft[leftIdx + 1]);
+                  vertexCoords.push(coordsLeft[leftIdx + 1], coordsRight[leftIdx], coordsRight[leftIdx + 1]);
+                  vertexColors.push(colorsLeft[leftIdx + 1], colorsRight[leftIdx], colorsRight[leftIdx + 1]);
                 }
 
                 if (vertexCoords.length % 3 === 0) {
-                  console.info(`${ lineID }: ${ elevationOffset }: [ ${ coordsTop.length },${ coordsBottom.length } ]`);
 
-                  const meshWallSection = new Mesh({
+                  wallSections.push(new Mesh({
                     spatialReference: outputSR,
                     vertexAttributes: {
                       position: vertexCoords.flat(),
                       color: vertexColors.flat()
                     }
-                  });
+                  }));
 
-                  resolve(meshWallSection);
                 } else {
-                  console.error(new Error(`${ lineID }: ${ elevationOffset }: [ vertexCoords.length % 3 !== 0 ] [ ${ vertexCoords.length } ]`));
-                  resolve();
+                  console.error(new Error(`${ lineID }: ${ locationHash }: [ vertexCoords.length % 3 !== 0 ] [ ${ vertexCoords.length } ]`));
                 }
               } else {
-                console.error(new Error(`${ lineID }: ${ elevationOffset }: [ coordsBottom.length !== coordsTop.length ] [ ${ coordsTop.length },${ coordsBottom.length } ]`));
-                resolve();
+                console.error(new Error(`${ lineID }: ${ locationHash }: [ coordsLeft.length !== coordsRight.length ] [ ${ coordsLeft.length },${ coordsRight.length } ]`));
               }
-            });
-          } else {
-            return Promise.resolve();
-          }
-        });
+            }
 
-        Promise.all(meshWallsHandles).then((meshWallsResponses) => {
-
-          const meshWalls = meshWallsResponses.filter(mwr => { return (mwr != null); });
+            return wallSections;
+          }, []);
 
           const wallGraphic = {
             attributes: {id: lineID},
-            geometry: meshUtils.merge(meshWalls),
+            geometry: meshUtils.merge(meshWallSections),
             symbol: meshSymbol,
             popupTemplate: {title: '{id}'}
           };
 
-          resolve({wallGraphic});
+          this._progress(` - wall graphic created for (LINE_NO = ${ lineID })...`);
+
+          resolve(wallGraphic);
         });
       });
     });
