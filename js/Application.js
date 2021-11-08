@@ -154,12 +154,9 @@ class Application extends AppBase {
    * @private
    */
   _progress(msg = '...') {
-
     if (!this.start) { this.start = Date.now(); }
-
     const seconds = ((Date.now() - this.start) / 1000).toFixed(0);
     console.info(`Duration: ${ seconds } seconds [ ${ msg } ]`);
-
   }
 
 
@@ -169,13 +166,16 @@ class Application extends AppBase {
    */
   initializeData(view) {
     return new Promise((resolve, reject) => {
-      require(['esri/layers/CSVLayer'], (CSVLayer) => {
+      require([
+        'esri/layers/CSVLayer',
+        'esri/layers/FeatureLayer'
+      ], (CSVLayer, FeatureLayer) => {
 
-        this._progress('Started');
+        this._progress('Process started...');
 
         const dataFilesInfos = [
-          {title: 'Paso Robles', url: './data/PasoRobles_4326.csv', visible: false, maxDataValue: 1566},
-          {title: 'Indian Wells Valley', url: './data/IndianWellsValley_4326.csv', visible: true, maxDataValue: 20000}
+          {title: 'Paso Robles', url: './data/PasoRobles.csv', visible: false, maxDataValue: 1566, zoomTo: false},
+          {title: 'Indian Wells Valley', url: './data/IndianWellsValley.csv', visible: false, maxDataValue: 20000, zoomTo: true}
         ];
 
         // RHO
@@ -187,9 +187,9 @@ class Application extends AppBase {
         // BELOW_DOI_m
 
         const cubeSizeMeters = {
-          height: 25,
-          width: 25,
-          depth: 25
+          height: 10,
+          width: 20,
+          depth: 20
         };
 
         dataFilesInfos.forEach(dataFileInfo => {
@@ -249,58 +249,80 @@ class Application extends AppBase {
           csvLayer.load().then(() => {
             view.map.add(csvLayer);
 
-            this._progress('CSV Layer loaded and added to map...');
+            if (dataFileInfo.zoomTo) {
+              view.goTo(csvLayer.fullExtent);
+            }
 
-            if (dataFileInfo.visible) {
-              csvLayer.visible = false;
+            this._progress(`CSV Layer loaded and added to map [ ${ csvLayer.title } ]`);
 
-              view.goTo(csvLayer.fullExtent).then(() => {
+            const lineIDsQuery = csvLayer.createQuery();
+            lineIDsQuery.set({
+              where: '1=1',
+              outFields: ['LINE_NO'],
+              returnDistinctValues: true,
+              returnGeometry: false
+            });
+            csvLayer.queryFeatures(lineIDsQuery).then((lineIDsFS) => {
 
-                const lineIDsQuery = csvLayer.createQuery();
-                lineIDsQuery.set({
-                  where: '1=1',
-                  outFields: ['LINE_NO'],
-                  returnDistinctValues: true,
-                  returnGeometry: false
-                });
-                csvLayer.queryFeatures(lineIDsQuery).then((lineIDsFS) => {
+              this._progress('list of LINE_NO retrieved...');
+              const lineIDs = lineIDsFS.features.map(feature => { return feature.attributes.LINE_NO; });
 
-                  this._progress('list of LINE_NO retrieved...');
-                  const lineIDs = lineIDsFS.features.map(feature => { return feature.attributes.LINE_NO; });
+              const processedLineHandles = lineIDs.map(lineID => {
+                return new Promise((resolve, reject) => {
 
-                  const processedLineHandles = lineIDs.map(lineID => {
-                    return new Promise((resolve, reject) => {
-
-                      const lineQuery = csvLayer.createQuery();
-                      lineQuery.set({
-                        where: `LINE_NO = ${ lineID }`,
-                        outFields: ['*'],
-                        returnGeometry: true
-                      });
-                      csvLayer.queryFeatures(lineQuery).then((lineFS) => {
-                        this._progress(`Creating data curtain for (LINE_NO = ${ lineID })...`);
-
-                        this.createCurtainMesh({
-                          view,
-                          lineID,
-                          renderer: csvLayer.renderer,
-                          maxDataValue: dataFileInfo.maxDataValue,
-                          features: lineFS.features
-                        }).then(resolve).catch(reject);
-
-                      }).catch(reject);
-                    });
+                  const lineQuery = csvLayer.createQuery();
+                  lineQuery.set({
+                    where: `LINE_NO = ${ lineID }`,
+                    outFields: ['*'],
+                    returnGeometry: true
                   });
-                  Promise.all(processedLineHandles).then((wallGraphics) => {
-                    this._progress('Finished');
+                  csvLayer.queryFeatures(lineQuery).then((lineFS) => {
+                    this._progress(`Creating data curtain for (LINE_NO = ${ lineID })...`);
 
-                    view.graphics.addMany(wallGraphics);
+                    this.createCurtainMesh({
+                      view,
+                      lineID,
+                      renderer: csvLayer.renderer,
+                      maxDataValue: dataFileInfo.maxDataValue,
+                      features: lineFS.features
+                    }).then(resolve).catch(reject);
 
-                    resolve();
-                  });
+                  }).catch(reject);
                 });
               });
-            }
+              Promise.all(processedLineHandles).then((wallGraphics) => {
+                this._progress('Process finished.');
+
+                const dataCurtainFeatureLayer = new FeatureLayer({
+                  title: `${ csvLayer.title } - Data Curtains`,
+                  fields: [
+                    {name: 'ObjectID', alias: "ObjectID", type: 'oid'},
+                    {name: 'LINE_NO', alias: "LINE NO", type: 'integer'},
+                  ],
+                  objectIdField: 'ObjectID',
+                  geometryType: 'mesh',
+                  spatialReference: csvLayer.spatialReference,
+                  source: wallGraphics,
+                  renderer: {
+                    type: 'simple',
+                    symbol: {
+                      type: "mesh-3d",
+                      symbolLayers: [
+                        {
+                          type: "fill",
+                          material: {color: "rgba(255,255,255,0.9)"},
+                          edges: {type: "solid", color: 'yellow', size: 2.5}
+                        }
+                      ]
+                    }
+                  }
+                });
+                view.map.add(dataCurtainFeatureLayer);
+
+                resolve();
+
+              }).catch(this.displayError);
+            }).catch(this.displayError);
           }).catch(this.displayError);
         });
 
@@ -324,18 +346,36 @@ class Application extends AppBase {
         }
       };
 
+      /**
+       *
+       * @param {Graphic[]} features
+       * @param {Renderer} renderer
+       * @returns {Promise<Number[][]>}
+       */
       this.getColors = (features, renderer) => {
         return new Promise((resolve, reject) => {
           workers.open(workerScriptUrl).then(connection => {
-
             const rendererJSON = renderer.toJSON();
             const featuresJSON = features.map(f => f.toJSON());
-
             connection.invoke("getColors", {featuresJSON, rendererJSON}).then(resolve).catch(reject);
-
           }).catch(reject);
         });
-      }
+      };
+
+      /**
+       *
+       * @param {{coords:Number[][], colors:Number[]}} featureInfosLeft
+       * @param {{coords:Number[][], colors:Number[]}} featureInfosRight
+       * @returns {Promise<unknown>}
+       */
+      this.createColumnSortedVertexAttributes = ({featureInfosLeft, featureInfosRight}) => {
+        return new Promise((resolve, reject) => {
+          workers.open(workerScriptUrl).then(connection => {
+            connection.invoke("createColumnSortedVertexAttributes", {featureInfosLeft, featureInfosRight}).then(resolve).catch(reject);
+          }).catch(reject);
+        });
+
+      };
 
     });
   }
@@ -438,10 +478,9 @@ class Application extends AppBase {
           }, []);
 
           const wallGraphic = {
-            attributes: {id: lineID},
+            attributes: {'LINE_NO': lineID},
             geometry: meshUtils.merge(meshWallSections),
-            symbol: meshSymbol,
-            popupTemplate: {title: '{id}'}
+            popupTemplate: {title: '{LINE_NO}'}
           };
 
           this._progress(` - wall graphic created for (LINE_NO = ${ lineID })...`);
